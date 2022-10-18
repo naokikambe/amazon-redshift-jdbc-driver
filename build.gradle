@@ -77,7 +77,7 @@ jar {
 
 distributions {
     main {
-        baseName = project.name.toLowerCase()
+        def baseName = project.name.toLowerCase()
         contents {
             into('/') { // Copy runnable jar into the distribution archive
                 from jar

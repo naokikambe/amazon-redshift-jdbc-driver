@@ -83,7 +83,10 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
   public static int BINARY_PROTOCOL_VERSION = 2;
   public static int EXTENDED2_RESULT_METADATA_SERVER_PROTOCOL_VERSION = 3; // Case sensitivity via COLLATION_INFORMATION
   public static int DEFAULT_SERVER_PROTOCOL_VERSION = EXTENDED2_RESULT_METADATA_SERVER_PROTOCOL_VERSION;
-  
+  private static final int MAX_CONN_RETRIES = 10;
+  private static final String ERRMSG_TOOMANYCONNS = "Sorry, too many " +
+          "connections. Please slow down and try again later.";
+
   private ISSPIClient createSSPI(RedshiftStream pgStream,
       String spnServiceClass,
       boolean enableNegotiate) {
@@ -176,6 +179,44 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
   @Override
   public QueryExecutor openConnectionImpl(HostSpec[] hostSpecs, String user, String database,
       Properties info, RedshiftLogger logger) throws SQLException {
+    // retry connecting when got the message: "FATAL: Sorry, too many connections. Please slow down and try again later."
+    QueryExecutor qe = null;
+    int retries = 0;
+    while (true) {
+      try {
+        qe = _openConnectionImpl(
+                hostSpecs, user, database, info, logger);
+        break;
+      } catch (SQLException e) {
+        if (e.getMessage().contains(ERRMSG_TOOMANYCONNS)) {
+          if (++retries >= MAX_CONN_RETRIES) {
+            if(RedshiftLogger.isEnable())
+              logger.log(LogLevel.DEBUG, "Max retries reaches: {0]",
+                      MAX_CONN_RETRIES);
+            throw e;
+          }
+          if(RedshiftLogger.isEnable())
+            logger.log(LogLevel.DEBUG, "Retrying connection: {0} / {1}",
+                    retries, MAX_CONN_RETRIES);
+          long msec = (long)Math.pow(2, retries) * 100;
+          if(RedshiftLogger.isEnable())
+            logger.log(LogLevel.DEBUG, "Sleeping for {0} msec", msec);
+          try {
+            Thread.sleep(msec);
+          } catch (InterruptedException ee) {
+            if(RedshiftLogger.isEnable())
+              logger.log(LogLevel.DEBUG, "A sleep thread interrupted");
+          }
+        } else {
+          throw e;
+        }
+      }
+    }
+    return qe;
+  }
+  private QueryExecutor _openConnectionImpl(HostSpec[] hostSpecs,
+                                             String user, String database,
+            Properties info, RedshiftLogger logger) throws SQLException {
     this.logger = logger;
   	SslMode sslMode = SslMode.of(info);
 
